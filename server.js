@@ -1,16 +1,38 @@
+const express = require('express');
+const http = require('http');
 const WebSocket = require('ws');
+
 const { computeTimeDomain } = require('./hrv');
 const { computeRisk } = require('./ai');
 
+/* ================= APP + HTTP SERVER ================= */
+
+const app = express();
+const server = http.createServer(app);
+
 /* ================= PORT (Railway kompatibilní) ================= */
+
 const PORT = process.env.PORT || 8080;
 
 /* ================= WEBSOCKET SERVER ================= */
-const wss = new WebSocket.Server({ port: PORT });
 
-console.log(`HUMAN ECG backend running on port ${PORT}`);
+const wss = new WebSocket.Server({
+    server,
+    path: "/"
+});
+
+server.listen(PORT, () => {
+    console.log(`HUMAN ECG backend running on port ${PORT}`);
+});
+
+/* ================= TEST ROUTE ================= */
+
+app.get('/', (req, res) => {
+    res.send("HUMAN ECG BACKEND RUNNING");
+});
 
 /* ================= STAV ================= */
+
 let rrBuffer = [];
 const MAX_RR_BUFFER = 300;
 
@@ -18,7 +40,7 @@ const MAX_RR_BUFFER = 300;
 
 wss.on('connection', (ws, req) => {
 
-    console.log("New connection");
+    console.log("New WebSocket connection");
 
     ws.on('message', (message) => {
 
