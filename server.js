@@ -6,16 +6,11 @@ const { computeTimeDomain } = require('./hrv');
 const { computeRisk } = require('./ai');
 
 /* ================= APP + HTTP SERVER ================= */
-
 const app = express();
 const server = http.createServer(app);
-
-/* ================= PORT (Railway kompatibilní) ================= */
-
 const PORT = process.env.PORT || 8080;
 
 /* ================= WEBSOCKET SERVER ================= */
-
 const wss = new WebSocket.Server({
     server,
     path: "/"
@@ -25,73 +20,65 @@ server.listen(PORT, () => {
     console.log(`HUMAN ECG backend running on port ${PORT}`);
 });
 
-/* ================= TEST ROUTE ================= */
-
 app.get('/', (req, res) => {
     res.send("HUMAN ECG BACKEND RUNNING");
 });
 
 /* ================= STAV ================= */
-
 let rrBuffer = [];
 const MAX_RR_BUFFER = 300;
 
 /* ================= HANDLING CONNECTIONS ================= */
-
 wss.on('connection', (ws, req) => {
-
-    console.log("New WebSocket connection");
+    console.log("New WebSocket connection established");
 
     ws.on('message', (message) => {
-
         let data;
-
         try {
             data = JSON.parse(message);
         } catch (err) {
-            console.log("Invalid JSON received");
+            // Ignorujeme ne-JSON zprávy, aby server nespadl
             return;
         }
 
-        /* ================= RR BUFFER ================= */
-
+        /* ================= RR BUFFER LOGIC ================= */
+        // ESP32 teď posílá JSON, ale pokud obsahuje "rr", přidáme ho do analýzy
         if (data.rr && typeof data.rr === "number") {
             rrBuffer.push(data.rr);
-
-            if (rrBuffer.length > MAX_RR_BUFFER) {
-                rrBuffer.shift();
-            }
+            if (rrBuffer.length > MAX_RR_BUFFER) rrBuffer.shift();
         }
 
-        /* ================= HRV SERVER-SIDE ================= */
+        /* ================= HRV & AI (Safe Mode) ================= */
+        let hrv = {};
+        let risk = "N/A";
 
-        const hrv = computeTimeDomain(rrBuffer);
+        try {
+            // Počítáme HRV jen pokud máme v bufferu aspoň nějaká data
+            if (rrBuffer.length > 2) {
+                hrv = computeTimeDomain(rrBuffer);
+                risk = computeRisk({ ...data, ...hrv });
+            }
+        } catch (e) {
+            console.log("Analytics error:", e.message);
+        }
 
-        /* ================= AI RISK ================= */
-
+        /* ================= ENRICH & BROADCAST ================= */
         const enriched = {
             ...data,
-            ...hrv
+            ...hrv,
+            risk: risk,
+            serverTimestamp: new Date().getTime()
         };
 
-        enriched.risk = computeRisk(enriched);
-
-        /* ================= BROADCAST ================= */
-
+        // ZÁSADNÍ ZMĚNA: Posíláme data VŽDY, i když analýza selže
         broadcast(JSON.stringify(enriched));
     });
 
-    ws.on('close', () => {
-        console.log("Connection closed");
-    });
-
-    ws.on('error', (err) => {
-        console.log("Socket error:", err.message);
-    });
+    ws.on('close', () => console.log("Connection closed"));
+    ws.on('error', (err) => console.log("Socket error:", err.message));
 });
 
 /* ================= BROADCAST FUNCTION ================= */
-
 function broadcast(message) {
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
