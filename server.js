@@ -22,8 +22,9 @@ app.get('/', (req, res) => {
     res.send("HUMAN ECG BACKEND RUNNING");
 });
 
+// STAV: Buffer pro RR intervaly (pro výpočet HRV)
 let rrBuffer = [];
-const MAX_RR_BUFFER = 300;
+const MAX_RR_BUFFER = 50; // Sníženo pro rychlejší reakci lišty
 
 wss.on('connection', (ws) => {
     console.log("New WebSocket connection established");
@@ -31,42 +32,51 @@ wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         let data;
         try {
-            // ZMĚNA: Převedení message na String (řeší Buffer/Binary problém)
             const messageString = message.toString();
             data = JSON.parse(messageString);
-            
-            // Diagnostika: Jednou za čas vypíšeme, že data dorazila
-            if (Math.random() > 0.98) console.log("Data received from client:", data.ecg ? "ECG OK" : "No ECG");
-            
         } catch (err) {
-            console.log("Parse error:", err.message);
-            return;
+            return; // Tichý návrat při chybném JSONu
         }
 
-        if (data.rr && typeof data.rr === "number") {
+        /* 1. ZPRACOVÁNÍ RR INTERVALU (Klíč pro BPM/HRV lištu) */
+        // ESP32 posílá data.rr jen když detekuje tep. Jinak posílá 0.
+        if (data.rr && data.rr > 300 && data.rr < 2000) { 
             rrBuffer.push(data.rr);
             if (rrBuffer.length > MAX_RR_BUFFER) rrBuffer.shift();
         }
 
-        let hrv = {};
-        let risk = "N/A";
+        /* 2. VÝPOČET HRV ANALYTIKY */
+        let hrv = {
+            rmssd: 0,
+            sdnn: 0,
+            pnn50: 0
+        };
+        let risk = "Analýza...";
+
         try {
-            if (rrBuffer.length > 2) {
-                hrv = computeTimeDomain(rrBuffer);
+            // Výpočet spustíme, jen pokud máme aspoň 3 tepy
+            if (rrBuffer.length >= 3) {
+                const results = computeTimeDomain(rrBuffer);
+                hrv.rmssd = results.rmssd || 0;
+                hrv.sdnn = results.sdnn || 0;
+                hrv.pnn50 = results.pnn50 || 0;
+                
+                // AI Risk (předáváme data i vypočtené hrv)
                 risk = computeRisk({ ...data, ...hrv });
             }
         } catch (e) {
             console.log("Analytics error:", e.message);
         }
 
+        /* 3. SLOŽENÍ BALÍČKU PRO WEB */
         const enriched = {
-            ...data,
-            ...hrv,
-            risk: risk,
+            ...data,       // ecg, bpm, raw, leads z ESP32
+            ...hrv,        // rmssd, sdnn, pnn50 z backendu
+            risk: risk,    // AI výsledek
             serverTimestamp: new Date().getTime()
         };
 
-        // Broadcast všem
+        // Broadcast všem připojeným (webu i dalším)
         const payload = JSON.stringify(enriched);
         wss.clients.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
