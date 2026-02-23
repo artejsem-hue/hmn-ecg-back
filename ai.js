@@ -1,14 +1,32 @@
 // ai.js
 
 function computeRisk(data) {
-    const { bpm, rmssd, pnn50 } = data;
+    const { bpm, rmssd, pnn50, rrIntervals } = data;
 
-    // Pokud nemáme zatím tep, systém se stále kalibruje
     if (!bpm || bpm === 0) {
         return "Snímám a kalibruji...";
     }
 
-    // Hodnocení srdeční frekvence (Tachykardie / Bradykardie)
+    // 1. Detekce specifických arytmií (potřebujeme historii RR intervalů)
+    if (rrIntervals && rrIntervals.length >= 4) {
+        const n = rrIntervals.length;
+        const rr1 = rrIntervals[n - 3];
+        const rr2 = rrIntervals[n - 2]; // Potenciálně předčasný tep
+        const rr3 = rrIntervals[n - 1]; // Potenciální kompenzační pauza
+        const mean = rrIntervals.reduce((a, b) => a + b, 0) / n;
+
+        // EXTRASYSTOLA (PVC): Tep přijde o 25 % dříve, následován pauzou o 25 % delší
+        if (rr2 < 0.75 * mean && rr3 > 1.25 * mean) {
+            return "Varování: Detekována Extrasystola (PVC)";
+        }
+    }
+
+    // FIBRILACE SÍNÍ (AFib): Extrémní chaos v tepu, vysoké RMSSD a BPM
+    if (rmssd > 60 && pnn50 > 50 && bpm > 90) {
+        return "RIZIKO: Možná Fibrilace síní (Nepravidelný rytmus)";
+    }
+
+    // 2. Hodnocení srdeční frekvence (Tachykardie / Bradykardie)
     if (bpm > 100) {
         return "Upozornění: Zvýšený tep (Tachykardie)";
     }
@@ -16,13 +34,9 @@ function computeRisk(data) {
         return "Upozornění: Nízký tep (Bradykardie)";
     }
 
-    // Hodnocení stresu a regenerace na základě HRV
-    // (Aktivuje se, až když jsou hodnoty nenulové, abychom zamezili falešným poplachům při startu)
+    // 3. Hodnocení stresu (Autonomní nervový systém)
     if (rmssd > 0 && rmssd < 15.0) {
         return "Upozornění: Nízká regenerace / Fyzický stres";
-    }
-    if (pnn50 > 0 && pnn50 < 3.0) {
-        return "Upozornění: Snížená variabilita rytmu";
     }
 
     return "Normální sinusový rytmus";
