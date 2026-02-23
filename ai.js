@@ -1,42 +1,31 @@
-/**
- * Huma Care AI Analysis Module
- * Vyhodnocuje zdravotní riziko na základě tepu a HRV parametrů.
- */
+// ai.js
+
 function computeRisk(data) {
-    // Pokud data chybí nebo je tep 0 (elektrody mimo tělo), nehlásíme riziko
-    if (!data.bpm || data.bpm === 0) {
-        return "Čekám na signál...";
+    const { bpm, rmssd, pnn50 } = data;
+
+    // Pokud nemáme zatím tep, systém se stále kalibruje
+    if (!bpm || bpm === 0) {
+        return "Snímám a kalibruji...";
     }
 
-    let score = 0;
+    // Hodnocení srdeční frekvence (Tachykardie / Bradykardie)
+    if (bpm > 100) {
+        return "Upozornění: Zvýšený tep (Tachykardie)";
+    }
+    if (bpm < 50) {
+        return "Upozornění: Nízký tep (Bradykardie)";
+    }
 
-    // 1. ANALÝZA TEPU (BPM)
-    // Sledujeme tachykardii a bradykardii
-    if (data.bpm > 110) score += 35; 
-    else if (data.bpm > 90) score += 15;
-    else if (data.bpm < 45) score += 25;
+    // Hodnocení stresu a regenerace na základě HRV
+    // (Aktivuje se, až když jsou hodnoty nenulové, abychom zamezili falešným poplachům při startu)
+    if (rmssd > 0 && rmssd < 15.0) {
+        return "Upozornění: Nízká regenerace / Fyzický stres";
+    }
+    if (pnn50 > 0 && pnn50 < 3.0) {
+        return "Upozornění: Snížená variabilita rytmu";
+    }
 
-    // 2. ANALÝZA VARIABILITY (RMSSD) - Klíč k únavě a stresu
-    // RMSSD je nejcitlivější ukazatel pro krátkodobá měření
-    if (data.rmssd > 0 && data.rmssd < 15) score += 40; 
-    else if (data.rmssd > 0 && data.rmssd < 30) score += 20;
-
-    // 3. CELKOVÁ ADAPTACE (SDNN)
-    // Ukazuje, jak se srdce dokáže přizpůsobit zátěži
-    if (data.sdnn > 0 && data.sdnn < 20) score += 30; 
-    else if (data.sdnn > 0 && data.sdnn < 50) score += 10;
-
-    // 4. RYTMUS (pNN50)
-    // Procento významných odchylek v rytmu
-    if (data.pnn50 > 0 && data.pnn50 < 3) score += 10;
-
-    // INTERPRETACE VÝSLEDKŮ (Interpretace skóre)
-    if (score === 0) return "Optimální";
-    if (score < 30)  return "Dobrá kondice";
-    if (score < 60)  return "Zvýšená zátěž";
-    if (score < 85)  return "Vysoké riziko";
-    
-    return "Kritický stav";
+    return "Normální sinusový rytmus";
 }
 
 module.exports = { computeRisk };
